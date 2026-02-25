@@ -1,0 +1,113 @@
+version: '2.2'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: ./.config/dev/Dockerfile
+    command: uvicorn main.asgi:application --host 0.0.0.0 --port 8000 --log-level debug
+    volumes:
+      - ./:/app/
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    working_dir : /app/
+    ports:
+      - 8000:8000
+    env_file:
+      - ./.env.dev
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres:14.5-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - TZ=Asia/Seoul
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=ksol0220
+      - POSTGRES_DB=ksol
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+  # 오케스트레이터 + 결과 집계
+  celery_orchestrator:
+    build:
+      context: .
+      dockerfile: ./.config/dev/Dockerfile
+    command: "celery -A main worker -l info -Q default,aggregation -c 2 --hostname=orchestrator@%h"
+    volumes:
+      - ./:/app/
+    env_file:
+      - ./.env.dev
+    depends_on:
+      - redis
+      - db
+  # 키워드 처리 워커 3개 (IP풀 파티셔닝)
+  celery_worker_1:
+    build:
+      context: .
+      dockerfile: ./.config/dev/Dockerfile
+    command: "celery -A main worker -l info -Q keywords -c 3 --hostname=worker1@%h --max-tasks-per-child=100"
+    volumes:
+      - ./:/app/
+    env_file:
+      - ./.env.dev
+    depends_on:
+      - redis
+      - db
+  celery_worker_2:
+    build:
+      context: .
+      dockerfile: ./.config/dev/Dockerfile
+    command: "celery -A main worker -l info -Q keywords -c 3 --hostname=worker2@%h --max-tasks-per-child=100"
+    volumes:
+      - ./:/app/
+    env_file:
+      - ./.env.dev
+    depends_on:
+      - redis
+      - db
+  celery_worker_3:
+    build:
+      context: .
+      dockerfile: ./.config/dev/Dockerfile
+    command: "celery -A main worker -l info -Q keywords -c 3 --hostname=worker3@%h --max-tasks-per-child=100"
+    volumes:
+      - ./:/app/
+    env_file:
+      - ./.env.dev
+    depends_on:
+      - redis
+      - db
+  # 스케줄러 (beat_schedule 볼륨으로 중복 실행 방지)
+  celery_beat:
+    build:
+      context: .
+      dockerfile: ./.config/dev/Dockerfile
+    command: "celery -A main beat -l info -s /app/celerybeat-schedule/celerybeat-schedule"
+    volumes:
+      - ./:/app/
+      - beat_schedule:/app/celerybeat-schedule
+    env_file:
+      - ./.env.dev
+    depends_on:
+      - redis
+      - db
+  flower:
+    image: mher/flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_PORT=5555
+    ports:
+      - 5555:5555
+    depends_on:
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
+  beat_schedule:

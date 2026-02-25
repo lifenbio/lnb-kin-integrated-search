@@ -1,0 +1,60 @@
+version: '2.2'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: ./.config/prod/Dockerfile
+    command: uvicorn main.asgi:application --host 0.0.0.0 --port 8000
+    working_dir: /app/
+    ports:
+      - 8000:8000
+    env_file:
+      - ./.env.prod
+    depends_on:
+      - redis
+    restart: unless-stopped
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+  # 오케스트레이터 + 결과 집계
+  celery_orchestrator:
+    build:
+      context: .
+      dockerfile: ./.config/prod/Dockerfile
+    command: "celery -A main worker -l info -Q default,aggregation -c 2 --hostname=orchestrator@%h"
+    env_file:
+      - ./.env.prod
+    depends_on:
+      - redis
+    restart: unless-stopped
+  # 키워드 처리 워커 1개 (서버당 1 동시 = 총 4대 × 1 = 4 동시 크롤러)
+  celery_worker:
+    build:
+      context: .
+      dockerfile: ./.config/prod/Dockerfile
+    command: "celery -A main worker -l info -Q keywords -c 1 --hostname=worker@%h --max-tasks-per-child=100"
+    env_file:
+      - ./.env.prod
+    depends_on:
+      - redis
+    restart: unless-stopped
+  # 스케줄러
+  celery_beat:
+    build:
+      context: .
+      dockerfile: ./.config/prod/Dockerfile
+    command: "celery -A main beat -l info -s /app/celerybeat-schedule/celerybeat-schedule"
+    volumes:
+      - beat_schedule:/app/celerybeat-schedule
+    env_file:
+      - ./.env.prod
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  beat_schedule:
