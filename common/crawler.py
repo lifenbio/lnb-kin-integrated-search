@@ -32,7 +32,7 @@ def _log(msg):
 TEAM_CONFIG = {
     'filename': '1그룹_지식인통검.xlsx',
     'email_subject': '[지식인통검(1그룹)] 결과 파일 송부',
-    'email_to': ['min4397@naver.com'],
+    'email_to': ['min4397@naver.com', 'sh.hwang@lifenbio.com', 'jhyjhy@lifenbio.com'],
 }
 
 

@@ -21,7 +21,7 @@ app.conf.timezone = 'Asia/Seoul'
 app.conf.beat_schedule = {
     "integration-area-collection-job": {
         "task": "common.tasks.integration_area_collection",
-        "schedule": crontab(minute=0, hour='0', day_of_week='mon-sun')
+        "schedule": crontab(minute=0, hour='5', day_of_week='mon-sun')
     }
 }
 
