@@ -37,11 +37,12 @@ TEAM_CONFIG = {
 
 
 def get_excel_columns():
-    """지식인팀 Excel 컬럼 정의 (21개)"""
+    """지식인팀 Excel 컬럼 정의 (22개)"""
     return [
         '수집월', '수집일', '키워드제품명', '매칭키워드', '검색어',
         '우선순위', '검색량(P)', '검색량(M)', '모통지식인블럭유무',
-        '모통노출유무', '모통노출위치', 'ID', '송출유무', '질문일자',
+        '모통노출유무', '모통노출위치', '검색결과docId',
+        'ID', '송출유무', '질문일자',
         '종류', 'URL제품', '전환키워드', '원고형태', '발행키워드',
         '송출URL', '누적조회수',
     ]
@@ -54,6 +55,9 @@ def get_excel_columns():
 def _get_normalized_kin_url(url):
     """지식인 URL에서 docId를 추출하여 정규화"""
     match = re.search(r'docId=(\d+)', url)
+    if match:
+        return match.group(1)
+    match = re.search(r'/docs/(\d+)', url)
     if match:
         return match.group(1)
     return None
@@ -108,6 +112,14 @@ def _extract_kin_items(soup):
             button = kin_item.select_one('button._keep_trigger')
             if button:
                 item_data['url'] = button.get('data-url', '')
+
+            # 폴백: button 없으면 <a> 태그에서 kin URL 추출
+            if not item_data['url']:
+                for a_tag in kin_item.select('a[href]'):
+                    href = a_tag.get('href', '')
+                    if 'kin.naver.com' in href:
+                        item_data['url'] = href
+                        break
 
             author_span = kin_item.select_one('.sds-comps-profile-info-title-text span.sds-comps-text-type-body1')
             if author_span:
@@ -176,7 +188,7 @@ def process_keyword(row, ip_addresses, bad_ip_addresses):
         bad_ip_addresses: 실패한 IP 목록 (mutable)
 
     Returns:
-        append_list: 결과 데이터 리스트 (길이 = get_excel_columns() 길이 = 21)
+        append_list: 결과 데이터 리스트 (길이 = get_excel_columns() 길이 = 22)
     """
     MAX_RETRIES = 20
     _log(f"[크롤링 시작] keyword={row.keyword}")
@@ -238,15 +250,21 @@ def process_keyword(row, ip_addresses, bad_ip_addresses):
 
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    # 4. 지식인 섹션 탐지
-    kin_sections = soup.select('div[data-meta-ssuid="kin"]')
-    kin_block_exists = 1 if kin_sections else 0
+    # 4. 모든 kinItem 추출 (실제 아이템 유무로 블럭 판단)
+    kin_items = _extract_kin_items(soup)
+    kin_block_exists = 1 if kin_items else 0
 
     # 5. 지식인 섹션 순위
     kin_rank = _get_kin_section_rank(soup) if kin_block_exists else 0
 
-    # 6. 모든 kinItem 추출 및 URL DB 매칭
-    kin_items = _extract_kin_items(soup)
+    # 6. 검색결과 docId 수집
+    search_doc_ids = []
+    for item in kin_items:
+        if item['url']:
+            doc_id = _get_normalized_kin_url(item['url'])
+            if doc_id:
+                search_doc_ids.append(doc_id)
+    search_doc_ids_str = ', '.join(search_doc_ids) if search_doc_ids else ''
 
     exposure_yn = 0
     author_id = ''
@@ -299,7 +317,7 @@ def process_keyword(row, ip_addresses, bad_ip_addresses):
 
         question_date, view_count = _extract_kin_detail(detail_response.text)
 
-    # 21개 컬럼 순서대로 리스트 생성
+    # 22개 컬럼 순서대로 리스트 생성
     append_list = [
         collect_month,      # 수집월
         collect_date,       # 수집일
@@ -312,6 +330,7 @@ def process_keyword(row, ip_addresses, bad_ip_addresses):
         kin_block_exists,   # 모통지식인블럭유무
         exposure_yn,        # 모통노출유무
         kin_rank,           # 모통노출위치
+        search_doc_ids_str, # 검색결과docId
         author_id,          # ID
         send_yn,            # 송출유무
         question_date,      # 질문일자

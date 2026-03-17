@@ -16,7 +16,7 @@ from django.conf import settings
 from common.models import Keyword, URL, CrawlJob, CrawlResult
 from common.package.naver_search import get_search_data
 from common.package.mail import send
-from common.crawler import process_keyword, get_excel_columns
+from common.crawler import process_keyword, get_excel_columns, _extract_kin_items, _get_normalized_kin_url, _get_kin_section_rank
 from common.tasks import process_keyword_task, save_results_and_check_completion
 from celery import chord, group
 from common.utils import (
@@ -230,6 +230,86 @@ def _extract_debug_urls(item, db_normalized_urls, db_urls, result):
                     "매칭된_DB_URL": [u for u in db_urls if u["정규화URL"] == normalized]
                 })
             break
+
+
+@search_router.get("/debug-kin", auth=None)
+def debug_kin(request, keyword: str):
+    """지식인 검색결과 docId vs DB docId 실시간 비교 디버깅 API
+
+    사용법: /api/search/debug-kin?keyword=계피효능
+    - 모바일 검색 실행 → kin 섹션/아이템 추출 → docId 목록
+    - DB URL 조회 → docId 목록
+    - 매칭 비교 결과 반환
+    """
+    ip_addresses = load_ip_addresses()
+
+    response, ip_address = get_search_data(
+        f"https://m.search.naver.com/search.naver?sm=mtp_hty.top&where=m&query={keyword}",
+        ip_addresses
+    )
+
+    if response.status_code != 200:
+        return {"error": f"검색 실패: {response.status_code}"}
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # 검색결과에서 kin 아이템 추출
+    kin_items = _extract_kin_items(soup)
+    kin_block_exists = 1 if kin_items else 0
+    kin_rank = _get_kin_section_rank(soup) if kin_block_exists else 0
+
+    search_doc_ids = []
+    search_items_detail = []
+    for item in kin_items:
+        doc_id = _get_normalized_kin_url(item['url']) if item['url'] else None
+        search_doc_ids.append(doc_id)
+        search_items_detail.append({
+            "url": item['url'][:100] + "..." if len(item['url']) > 100 else item['url'],
+            "docId": doc_id,
+            "author_id": item['author_id'],
+            "badge": item['badge'],
+        })
+
+    # DB URL에서 docId 추출
+    db_urls = []
+    db_doc_ids = []
+    for row in URL.objects.filter(keyword=keyword):
+        doc_id = _get_normalized_kin_url(row.url)
+        db_urls.append({
+            "url": row.url,
+            "docId": doc_id,
+            "product_name": row.product_name,
+        })
+        if doc_id:
+            db_doc_ids.append(doc_id)
+
+    # 매칭 비교
+    matched_doc_ids = [d for d in search_doc_ids if d and d in db_doc_ids]
+
+    result = {
+        "keyword": keyword,
+        "kin_block_exists": kin_block_exists,
+        "kin_rank": kin_rank,
+        "검색결과_kin아이템수": len(kin_items),
+        "검색결과_docId목록": search_doc_ids,
+        "검색결과_상세": search_items_detail,
+        "DB_URL수": len(db_urls),
+        "DB_docId목록": db_doc_ids,
+        "DB_URL_상세": db_urls,
+        "매칭된_docId": matched_doc_ids,
+        "매칭수": len(matched_doc_ids),
+    }
+
+    if not kin_items:
+        result["분석"] = "검색결과에 지식인 블럭이 없습니다."
+    elif not db_doc_ids:
+        result["분석"] = "DB에 이 키워드로 등록된 지식인 URL이 없습니다."
+    elif matched_doc_ids:
+        result["분석"] = f"{len(matched_doc_ids)}개 docId 매칭됨: {matched_doc_ids}"
+    else:
+        result["분석"] = f"매칭 없음. 검색결과 docId={search_doc_ids} vs DB docId={db_doc_ids}"
+
+    return result
 
 
 # ============================================================
