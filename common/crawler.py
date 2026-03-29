@@ -63,11 +63,26 @@ def _get_normalized_kin_url(url):
     return None
 
 
-def _check_kin_url(keyword, link_url):
-    """키워드에 등록된 URL과 링크 URL이 일치하는 URL 객체 반환
+_docid_cache = None
 
-    카페팀 check_url()과 다르게 URL 객체를 반환한다.
-    (product_name, conversion_keyword, content_type 등 접근 필요)
+
+def _get_docid_to_url_map():
+    """전체 URL 테이블에서 docId → URL 객체 매핑 캐시 생성 (워커당 1회)"""
+    global _docid_cache
+    if _docid_cache is None:
+        _docid_cache = {}
+        for row in URL.objects.all():
+            doc_id = _get_normalized_kin_url(row.url)
+            if doc_id and doc_id not in _docid_cache:
+                _docid_cache[doc_id] = row
+    return _docid_cache
+
+
+def _check_kin_url(keyword, link_url):
+    """검색결과 URL의 docId가 DB에 등록된 URL과 일치하는지 확인
+
+    지식인 글은 하나의 키워드로 송출하지만 여러 검색어에 노출될 수 있으므로
+    keyword 필터 없이 docId만으로 매칭한다.
 
     Returns:
         매칭된 URL 객체 또는 None
@@ -75,11 +90,7 @@ def _check_kin_url(keyword, link_url):
     normalized_link = _get_normalized_kin_url(link_url)
     if not normalized_link:
         return None
-    for row in URL.objects.filter(keyword=keyword):
-        normalized_row = _get_normalized_kin_url(row.url)
-        if normalized_row and normalized_link == normalized_row:
-            return row
-    return None
+    return _get_docid_to_url_map().get(normalized_link)
 
 
 def _get_kin_section_rank(soup):

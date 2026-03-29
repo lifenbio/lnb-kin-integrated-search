@@ -270,10 +270,10 @@ def debug_kin(request, keyword: str):
             "badge": item['badge'],
         })
 
-    # DB URL에서 docId 추출
+    # DB URL에서 docId 추출 (keyword 무관하게 전체 URL 대상)
     db_urls = []
     db_doc_ids = []
-    for row in URL.objects.filter(keyword=keyword):
+    for row in URL.objects.all():
         doc_id = _get_normalized_kin_url(row.url)
         db_urls.append({
             "url": row.url,
